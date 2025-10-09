@@ -39,13 +39,13 @@ from typing import Iterator, Dict, List
 
 matplotlib.use("Agg")
 
-__author__ = "Your Name"
-__copyright__ = "Universite Paris Diderot"
-__credits__ = ["Your Name"]
+__author__ = "Laura DUFOUR"
+__copyright__ = "Universite Paris Cité"
+__credits__ = ["Laura DUFOUR"]
 __license__ = "GPL"
 __version__ = "1.0.0"
-__maintainer__ = "Your Name"
-__email__ = "your@email.fr"
+__maintainer__ = "Laura DUFOUR"
+__email__ = "laura.dufour@etu.u-paris.fr"
 __status__ = "Developpement"
 
 
@@ -102,7 +102,12 @@ def read_fastq(fastq_file: Path) -> Iterator[str]:
     :param fastq_file: (Path) Path to the fastq file.
     :return: A generator object that iterate the read sequences.
     """
-    pass
+
+    with open(fastq_file, 'r') as f:
+        for line in f:
+            yield next(f).strip() #on skip la 1e ligne qui correspond au header
+            next(f) #on skip les deux lignes suivantes
+            next(f)
 
 
 def cut_kmer(read: str, kmer_size: int) -> Iterator[str]:
@@ -111,7 +116,9 @@ def cut_kmer(read: str, kmer_size: int) -> Iterator[str]:
     :param read: (str) Sequence of a read.
     :return: A generator object that provides the kmers (str) of size kmer_size.
     """
-    pass
+    for i in range(0, len(read)-kmer_size+1):
+        current_read = read[i:i+kmer_size]
+        yield current_read
 
 
 def build_kmer_dict(fastq_file: Path, kmer_size: int) -> Dict[str, int]:
@@ -120,8 +127,16 @@ def build_kmer_dict(fastq_file: Path, kmer_size: int) -> Dict[str, int]:
     :param fastq_file: (str) Path to the fastq file.
     :return: A dictionnary object that identify all kmer occurrences.
     """
-    pass
-
+    kmer_dict = {}
+    read_list = list(read_fastq(fastq_file))
+    for read in read_list:
+        kmer_list = list(cut_kmer(read, kmer_size))
+        for kmer in kmer_list:
+            if kmer not in kmer_dict.keys():
+                kmer_dict[kmer] = 1 # on initialise le kmer, on lui associe une occurence
+            else:
+                kmer_dict[kmer] += 1 # on incrémente de 1 son occurence s'il existe déjà
+    return kmer_dict
 
 def build_graph(kmer_dict: Dict[str, int]) -> DiGraph:
     """Build the debruijn graph
@@ -129,7 +144,18 @@ def build_graph(kmer_dict: Dict[str, int]) -> DiGraph:
     :param kmer_dict: A dictionnary object that identify all kmer occurrences.
     :return: A directed graph (nx) of all kmer substring and weight (occurrence).
     """
-    pass
+    graph = DiGraph()
+
+    for kmer, weight in kmer_dict.items():
+        # print(kmer, weight)
+        prefix = kmer[:-1]
+        suffix = kmer[1:]
+        # print(f"prefix : {prefix}\nsuffix: {suffix}")
+        graph.add_edge(prefix, suffix, weight=weight)
+
+
+    return graph
+    
 
 
 def remove_paths(
@@ -303,6 +329,8 @@ def main() -> None:  # pragma: no cover
     # Plot the graph
     # if args.graphimg_file:
     #     draw_graph(graph, args.graphimg_file)
+    dico = build_kmer_dict(args.fastq_file, 3)
+    build_graph(dico)
 
 
 if __name__ == "__main__":  # pragma: no cover
