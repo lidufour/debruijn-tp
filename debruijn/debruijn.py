@@ -25,6 +25,8 @@ from networkx import (
     random_layout,
     draw,
     spring_layout,
+    draw_networkx_nodes,
+    draw_networkx_edges,
 )
 import matplotlib
 from operator import itemgetter
@@ -255,7 +257,19 @@ def get_starting_nodes(graph: DiGraph) -> List[str]:
     :param graph: (nx.DiGraph) A directed graph object
     :return: (list) A list of all nodes without predecessors
     """
-    pass
+    starts: List[str] = []
+    for n in graph.nodes:
+        it = graph.predecessors(n)
+        try:
+            next(it)
+            has_pred = True
+        except StopIteration:
+            has_pred = False
+
+        if not has_pred:
+            starts.append(n)
+
+    return sorted(starts)
 
 
 def get_sink_nodes(graph: DiGraph) -> List[str]:
@@ -264,8 +278,11 @@ def get_sink_nodes(graph: DiGraph) -> List[str]:
     :param graph: (nx.DiGraph) A directed graph object
     :return: (list) A list of all nodes without successors
     """
-    pass
-
+    sinks: List[str] = []
+    for node in graph.nodes:
+        if len(list(graph.successors(node))) == 0:
+            sinks.append(node)
+    return sorted(sinks)
 
 def get_contigs(
     graph: DiGraph, starting_nodes: List[str], ending_nodes: List[str]
@@ -277,7 +294,18 @@ def get_contigs(
     :param ending_nodes: (list) A list of nodes without successors
     :return: (list) List of [contiguous sequence and their length]
     """
-    pass
+    contigs: List[tuple[str, int]] = []
+
+    for start in sorted(starting_nodes):
+        for end in sorted(ending_nodes):
+            if has_path(graph, start, end):
+                for path in all_simple_paths(graph, start, end):
+                    seq = path[0]
+                    for node in path[1:]:
+                        seq += node[-1]
+                    contigs.append((seq, len(seq)))
+
+    return contigs
 
 
 def save_contigs(contigs_list: List[str], output_file: Path) -> None:
@@ -286,7 +314,16 @@ def save_contigs(contigs_list: List[str], output_file: Path) -> None:
     :param contig_list: (list) List of [contiguous sequence and their length]
     :param output_file: (Path) Path to the output file
     """
-    pass
+    with output_file.open("w") as filout:
+        for i, item in enumerate(contigs_list):
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                seq, length = str(item[0]), int(item[1])
+            else:
+                seq = str(item)
+                length = len(seq)
+
+            filout.write(f">contig_{i} len={length}\n")
+            filout.write(textwrap.fill(seq, width=80) + "\n")
 
 
 def draw_graph(graph: DiGraph, graphimg_file: Path) -> None:  # pragma: no cover
@@ -303,7 +340,7 @@ def draw_graph(graph: DiGraph, graphimg_file: Path) -> None:  # pragma: no cover
     # Draw the graph with networkx
     # pos=nx.spring_layout(graph)
     pos = nx.random_layout(graph)
-    nx.draw_networkx_nodes(graph, pos, node_size=6)
+    draw_networkx_nodes(graph, pos, node_size=6)
     nx.draw_networkx_edges(graph, pos, edgelist=elarge, width=6)
     nx.draw_networkx_edges(
         graph, pos, edgelist=esmall, width=6, alpha=0.5, edge_color="b", style="dashed"
