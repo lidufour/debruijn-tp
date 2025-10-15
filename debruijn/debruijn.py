@@ -34,7 +34,7 @@ import random
 
 random.seed(9001)
 from random import randint
-import statistics
+from statistics import stdev, mean
 import textwrap
 import matplotlib.pyplot as plt
 from typing import Iterator, Dict, List
@@ -175,7 +175,22 @@ def remove_paths(
     :param delete_sink_node: (boolean) True->We remove the last node of a path
     :return: (nx.DiGraph) A directed graph object
     """
-    pass
+    input_graph = graph.copy()
+    nodes_to_remove = set()
+
+    for path in path_list:
+        if not path:
+            continue
+
+        start_idx = 0 if delete_entry_node else 1
+        end_idx = len(path) if delete_sink_node else len(path) - 1
+
+        nodes_to_remove.update(path[start_idx:end_idx])
+
+    nodes_present = [n for n in nodes_to_remove if n in input_graph]
+    input_graph.remove_nodes_from(nodes_present)
+
+    return input_graph
 
 
 def select_best_path(
@@ -196,7 +211,39 @@ def select_best_path(
     :param delete_sink_node: (boolean) True->We remove the last node of a path
     :return: (nx.DiGraph) A directed graph object
     """
-    pass
+    if not path_list:
+        return graph
+
+    # Choix du meilleur chemin
+    if len(weight_avg_list) > 1 and stdev(weight_avg_list) > 0:
+        best_idx = max(range(len(path_list)), key=lambda i: weight_avg_list[i])
+    elif len(path_length) > 1 and stdev(path_length) > 0:
+        best_idx = max(range(len(path_list)), key=lambda i: path_length[i])
+    else:
+        best_idx = randint(0, len(path_list) - 1)
+
+    G = graph.copy()
+
+    # Suppressions ciblées selon les flags
+    for i, path in enumerate(path_list):
+        if i == best_idx or not path:
+            continue
+
+        if delete_entry_node and not delete_sink_node:
+            # couper la pointe d'entrée : on enlève tout sauf le dernier (noeud commun d'arrivée)
+            nodes_to_remove = path[:-1]
+        elif delete_sink_node and not delete_entry_node:
+            # couper la pointe de sortie : on enlève tout sauf le premier (noeud commun de départ)
+            nodes_to_remove = path[1:]
+        elif not delete_entry_node and not delete_sink_node:
+            # seulement les noeuds internes
+            nodes_to_remove = path[1:-1]
+        else:  # delete_entry_node and delete_sink_node
+            nodes_to_remove = path[:]
+
+        G.remove_nodes_from([n for n in nodes_to_remove if n in G])
+
+    return G
 
 
 def path_average_weight(graph: DiGraph, path: List[str]) -> float:
@@ -206,7 +253,7 @@ def path_average_weight(graph: DiGraph, path: List[str]) -> float:
     :param path: (list) A path consist of a list of nodes
     :return: (float) The average weight of a path
     """
-    return statistics.mean(
+    return mean(
         [d["weight"] for (u, v, d) in graph.subgraph(path).edges(data=True)]
     )
 
@@ -219,7 +266,21 @@ def solve_bubble(graph: DiGraph, ancestor_node: str, descendant_node: str) -> Di
     :param descendant_node: (str) A downstream node in the graph
     :return: (nx.DiGraph) A directed graph object
     """
-    pass
+    paths: List[List[str]] = list(all_simple_paths(graph, ancestor_node, descendant_node))
+    if len(paths) <= 1:
+        return graph
+
+    lengths = [len(p) for p in paths]
+    weights = [path_average_weight(graph, p) for p in paths]  # uses Graph.subgraph(path).edges(data=True)
+
+    return select_best_path(
+        graph,
+        path_list=paths,
+        path_length=lengths,
+        weight_avg_list=weights,
+        delete_entry_node=False,
+        delete_sink_node=False,
+    )
 
 
 def simplify_bubbles(graph: DiGraph) -> DiGraph:
@@ -228,7 +289,21 @@ def simplify_bubbles(graph: DiGraph) -> DiGraph:
     :param graph: (nx.DiGraph) A directed graph object
     :return: (nx.DiGraph) A directed graph object
     """
-    pass
+    for n in list(graph.nodes):  # itérer sur une copie car le graphe peut être modifié
+        preds = list(graph.predecessors(n))  # graph.predecessors(node)
+        if len(preds) > 1:
+            # combinaisons uniques (i, j) sans itertools
+            for i in range(len(preds) - 1):
+                for j in range(i + 1, len(preds)):
+                    anc = lowest_common_ancestor(graph, preds[i], preds[j])  # LCA
+                    if anc is not None and anc != n:
+                        # On a détecté une bulle entre anc (ancêtre) et n (descendant)
+                        new_graph = solve_bubble(graph, anc, n)
+                        # La simplification peut supprimer des nœuds/arrêtes -> récursif
+                        return simplify_bubbles(new_graph)
+
+    # Aucune bulle détectée
+    return graph
 
 
 def solve_entry_tips(graph: DiGraph, starting_nodes: List[str]) -> DiGraph:
@@ -238,7 +313,41 @@ def solve_entry_tips(graph: DiGraph, starting_nodes: List[str]) -> DiGraph:
     :param starting_nodes: (list) A list of starting nodes
     :return: (nx.DiGraph) A directed graph object
     """
-    pass
+    for n in list(graph.nodes):
+        # Sélection des start nodes qui atteignent n
+        reachable_starts = []
+        for s in starting_nodes:
+            if s in graph and n in graph and has_path(graph, s, n):  # nx.has_path
+                reachable_starts.append(s)
+
+        if len(reachable_starts) >= 2:
+            # Construire tous les chemins simples start -> n
+            paths, lengths, weights = [], [], []
+            for s in reachable_starts:
+                for p in all_simple_paths(graph, s, n):  # nx.all_simple_paths
+                    paths.append(p)
+                    lengths.append(len(p))
+                    # Moyenne des poids des arêtes du chemin via Graph.subgraph(path).edges(data=True)
+                    ew = []
+                    for u, v, d in graph.subgraph(p).edges(data=True):
+                        ew.append(d.get("weight", 1))
+                    weights.append(sum(ew) / len(ew) if ew else 0.0)
+
+            if len(paths) > 1:
+                # On supprime les mauvaises pointes d'entrée (on ne supprime pas le noeud de sortie)
+                new_graph = select_best_path(
+                    graph,
+                    path_list=paths,
+                    path_length=lengths,
+                    weight_avg_list=weights,
+                    delete_entry_node=True,   # supprimer les bouts d'entrée indésirables
+                    delete_sink_node=False,   # conserver le noeud d'arrivée commun
+                )
+                # La simplification modifie le graphe -> récursion
+                return solve_entry_tips(new_graph, starting_nodes)
+
+    # Rien à simplifier
+    return graph
 
 
 def solve_out_tips(graph: DiGraph, ending_nodes: List[str]) -> DiGraph:
@@ -248,7 +357,42 @@ def solve_out_tips(graph: DiGraph, ending_nodes: List[str]) -> DiGraph:
     :param ending_nodes: (list) A list of ending nodes
     :return: (nx.DiGraph) A directed graph object
     """
-    pass
+    for n in list(graph.nodes):  # itérer sur une copie car le graphe peut être modifié
+        # Sélection des end nodes atteignables depuis n
+        reachable_ends = []
+        for e in ending_nodes:
+            if n in graph and e in graph and has_path(graph, n, e):  # nx.has_path
+                reachable_ends.append(e)
+
+        if len(reachable_ends) >= 2:
+            # Construire tous les chemins simples n -> end
+            paths, lengths, weights = [], [], []
+            for e in reachable_ends:
+                for p in all_simple_paths(graph, n, e):  # nx.all_simple_paths
+                    paths.append(p)
+                    lengths.append(len(p))
+                    # Moyenne des poids via Graph.subgraph(path).edges(data=True)
+                    ew = []
+                    for u, v, d in graph.subgraph(p).edges(data=True):
+                        ew.append(d.get("weight", 1))
+                    weights.append(sum(ew) / len(ew) if ew else 0.0)
+
+            if len(paths) > 1:
+                # Supprimer les mauvaises pointes de sortie :
+                # ne PAS supprimer le noeud de départ commun (entry), mais supprimer les sinks indésirables
+                new_graph = select_best_path(
+                    graph,
+                    path_list=paths,
+                    path_length=lengths,
+                    weight_avg_list=weights,
+                    delete_entry_node=False,  # conserver le noeud de départ commun
+                    delete_sink_node=True,    # supprimer les noeuds de sortie des chemins non retenus
+                )
+                # La simplification modifie le graphe => récursif
+                return solve_out_tips(new_graph, ending_nodes)
+
+    # Rien à simplifier
+    return graph
 
 
 def get_starting_nodes(graph: DiGraph) -> List[str]:
