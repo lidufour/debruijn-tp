@@ -357,41 +357,40 @@ def solve_out_tips(graph: DiGraph, ending_nodes: List[str]) -> DiGraph:
     :param ending_nodes: (list) A list of ending nodes
     :return: (nx.DiGraph) A directed graph object
     """
-    for n in list(graph.nodes):  # itérer sur une copie car le graphe peut être modifié
-        # Sélection des end nodes atteignables depuis n
+    for n in list(graph.nodes):
+        # Ne considérer que des nœuds avec vraie branche de sortie
+        if len(list(graph.successors(n))) < 2:
+            continue
+
+        # Sinks atteignables depuis n
         reachable_ends = []
         for e in ending_nodes:
-            if n in graph and e in graph and has_path(graph, n, e):  # nx.has_path
+            if n in graph and e in graph and has_path(graph, n, e):
                 reachable_ends.append(e)
 
         if len(reachable_ends) >= 2:
-            # Construire tous les chemins simples n -> end
+            # Tous les chemins simples n -> e
             paths, lengths, weights = [], [], []
             for e in reachable_ends:
-                for p in all_simple_paths(graph, n, e):  # nx.all_simple_paths
+                for p in all_simple_paths(graph, n, e):
                     paths.append(p)
-                    lengths.append(len(p))
-                    # Moyenne des poids via Graph.subgraph(path).edges(data=True)
-                    ew = []
-                    for u, v, d in graph.subgraph(p).edges(data=True):
-                        ew.append(d.get("weight", 1))
+                    lengths.append(len(p))  # nb de nœuds; la décision ne dépend que des écarts
+                    # moyenne des poids des arêtes du chemin
+                    ew = [d.get("weight", 1) for _, _, d in graph.subgraph(p).edges(data=True)]
                     weights.append(sum(ew) / len(ew) if ew else 0.0)
 
             if len(paths) > 1:
-                # Supprimer les mauvaises pointes de sortie :
-                # ne PAS supprimer le noeud de départ commun (entry), mais supprimer les sinks indésirables
+                # Couper uniquement les sinks des chemins perdants (on garde n)
                 new_graph = select_best_path(
                     graph,
                     path_list=paths,
                     path_length=lengths,
                     weight_avg_list=weights,
-                    delete_entry_node=False,  # conserver le noeud de départ commun
-                    delete_sink_node=True,    # supprimer les noeuds de sortie des chemins non retenus
+                    delete_entry_node=False,
+                    delete_sink_node=True,
                 )
-                # La simplification modifie le graphe => récursif
                 return solve_out_tips(new_graph, ending_nodes)
 
-    # Rien à simplifier
     return graph
 
 
@@ -483,10 +482,10 @@ def draw_graph(graph: DiGraph, graphimg_file: Path) -> None:  # pragma: no cover
     # print(elarge)
     # Draw the graph with networkx
     # pos=nx.spring_layout(graph)
-    pos = nx.random_layout(graph)
+    pos = random_layout(graph)
     draw_networkx_nodes(graph, pos, node_size=6)
-    nx.draw_networkx_edges(graph, pos, edgelist=elarge, width=6)
-    nx.draw_networkx_edges(
+    draw_networkx_edges(graph, pos, edgelist=elarge, width=6)
+    draw_networkx_edges(
         graph, pos, edgelist=esmall, width=6, alpha=0.5, edge_color="b", style="dashed"
     )
     # nx.draw_networkx(graph, pos, node_size=10, with_labels=False)
@@ -504,14 +503,32 @@ def main() -> None:  # pragma: no cover
     # Get arguments
     args = get_arguments()
 
+    #Lecture & construction du graphe
+    dico = build_kmer_dict(args.fastq_file, args.kmer_size)
+    graph = build_graph(dico)
+
+    #Résolution des bulles
+    graph = simplify_bubbles(graph)
+
+    #Résolution des pointes d’entrée et de sortie
+    starts = get_starting_nodes(graph)
+    graph = solve_entry_tips(graph, starts)
+
+    ends = get_sink_nodes(graph)
+    graph = solve_out_tips(graph, ends)
+
+    # Extraction & écriture des contigs
+    starts = get_starting_nodes(graph)
+    ends = get_sink_nodes(graph)
+    contigs = get_contigs(graph, starts, ends)
+    save_contigs(contigs, args.output_file)
+
     # Fonctions de dessin du graphe
     # A decommenter si vous souhaitez visualiser un petit
     # graphe
     # Plot the graph
-    # if args.graphimg_file:
-    #     draw_graph(graph, args.graphimg_file)
-    dico = build_kmer_dict(args.fastq_file, 3)
-    build_graph(dico)
+    if args.graphimg_file:
+        draw_graph(graph, args.graphimg_file)
 
 
 if __name__ == "__main__":  # pragma: no cover
